@@ -50,19 +50,16 @@ public class CordovaApduService extends HostApduService {
      */
     @Override
     public byte[] processCommandApdu(byte[] commandApdu, Bundle extras) {
-        Log.i(TAG, "Received APDU: " + ByteArrayToHexString(commandApdu));
-
-        // save a reference in static variable (hack)
-        cordovaApduService = this;
-
-        if (hcePlugin != null) {
-            hcePlugin.sendCommand(commandApdu);
-        } else {
-            Log.e(TAG, "No reference to HCE Plugin.");
-        }
-
-        // return null since JavaScript code will send the response
-        return null;
+   // Return an NDEF Text message instead of APDU response
+    String msg = "Hello from OutSystems";
+ 
+    try {
+        NdefRecord textRecord = createTextRecord(msg);
+        NdefMessage ndefMessage = new NdefMessage(new NdefRecord[]{textRecord});
+        return wrapMessageInSelectOk(ndefMessage.toByteArray());
+    } catch (Exception e) {
+        return new byte[]{};
+    }
     }
 
     /**
