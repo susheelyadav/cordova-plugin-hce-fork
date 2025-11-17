@@ -1,29 +1,28 @@
 // Cordova HCE Plugin
 // (c) 2015 Don Coleman
-
+ 
 module.exports = {
-
-    // Register to receive APDU commands from the remote device.
-    // Commands will be sent as Uint8Array to the success callback. The success
-    // callback is long lived and may be called many times.
-    // Responses to commands should be sent using hce.sendResponse()
-    //
-    // http://developer.android.com/reference/android/nfc/cardemulation/HostApduService.html#processCommandApdu(byte[], android.os.Bundle)
-    registerCommandCallback: function(success, failure) {
+ 
+    // Register to receive APDU commands from the terminal.
+    // Success callback receives Uint8Array commands
+    registerCommandCallback: function (success, failure) {
         cordova.exec(success, failure, 'HCE', 'registerCommandCallback', []);
     },
-
-    // Send a response to the APDU Command
-    // responseApdu should be a Uint8Array
-    // http://developer.android.com/reference/android/nfc/cardemulation/HostApduService.html#sendResponseApdu(byte[])
-    sendResponse: function(responseApdu, success, failure) {
+ 
+    // Send APDU response back to terminal
+    // responseApdu must be Uint8Array or ArrayBuffer
+    sendResponse: function (responseApdu, success, failure) {
+ 
+        // Fix for OutSystems & Cordova: ensure ArrayBuffer
+        if (responseApdu instanceof Uint8Array) {
+            responseApdu = responseApdu.buffer;
+        }
+ 
         cordova.exec(success, failure, 'HCE', 'sendResponse', [responseApdu]);
     },
-
-    // Register to receive callback when host service is deactivated.
-    // http://developer.android.com/reference/android/nfc/cardemulation/HostApduService.html#onDeactivated(int)
-    registerDeactivatedCallback: function(success, failure) {
+ 
+    // Receive "onDeactivated" callback
+    registerDeactivatedCallback: function (success, failure) {
         cordova.exec(success, failure, 'HCE', 'registerDeactivatedCallback', []);
     }
-
 };
