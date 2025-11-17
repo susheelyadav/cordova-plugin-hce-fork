@@ -1,85 +1,91 @@
-// Cordova HCE Plugin
-// Updated for OutSystems NFC HCE Integration
- 
 package com.megster.cordova.hce;
  
-import android.util.Log;
- 
 import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaArgs;
 import org.apache.cordova.CordovaPlugin;
-import org.apache.cordova.PluginResult;
+import org.json.JSONArray;
 import org.json.JSONException;
  
-import java.util.Arrays;
+import android.nfc.NfcAdapter;
+import android.nfc.cardemulation.HostApduService;
+import android.util.Log;
  
 public class HCEPlugin extends CordovaPlugin {
  
-    private static final String REGISTER_COMMAND_CALLBACK = "registerCommandCallback";
-    private static final String SEND_RESPONSE = "sendResponse";
-    private static final String REGISTER_DEACTIVATED_CALLBACK = "registerDeactivatedCallback";
-    private static final String TAG = "HCEPlugin";
+    private static final String TAG = "CordovaHCE";
  
-    private CallbackContext onCommandCallback;
-    private CallbackContext onDeactivatedCallback;
+    public interface CommandCallback {
+        void onCommandReceived(byte[] apdu);
+    }
+ 
+    public static CommandCallback commandCallback;
  
     @Override
-    public boolean execute(String action, CordovaArgs args, CallbackContext callbackContext) throws JSONException {
+    public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
  
-        Log.d(TAG, "Action: " + action);
+        if (action.equals("registerCommandCallback")) {
+            registerCallback(callbackContext);
+            return true;
  
-        switch (action) {
+        } else if (action.equals("sendResponse")) {
+            byte[] response = toByteArray(args.getString(0));
+            sendResponseApdu(response);
+            callbackContext.success();
+            return true;
+        }
  
-            case REGISTER_COMMAND_CALLBACK:
-                CordovaApduService.setHCEPlugin(this);
+        return false;
+    }
  
-                onCommandCallback = callbackContext;
-                PluginResult cmdResult = new PluginResult(PluginResult.Status.NO_RESULT);
-                cmdResult.setKeepCallback(true);
-                callbackContext.sendPluginResult(cmdResult);
-                return true;
+    private void registerCallback(final CallbackContext callbackContext) {
+        commandCallback = new CommandCallback() {
+            @Override
+            public void onCommandReceived(byte[] apdu) {
+                try {
+                    JSONArray json = new JSONArray();
+                    json.put(bytesToHex(apdu));
  
-            case SEND_RESPONSE:
-                byte[] responseBytes = args.getArrayBuffer(0);
+                    callbackContext.success(json);
  
-                if (CordovaApduService.sendResponse(responseBytes)) {
-                    callbackContext.success();
-                } else {
-                    callbackContext.error("CordovaApduService not connected.");
+                } catch (Exception e) {
+                    Log.e(TAG, "Callback error", e);
                 }
-                return true;
+            }
+        };
+    }
  
-            case REGISTER_DEACTIVATED_CALLBACK:
-                onDeactivatedCallback = callbackContext;
-                PluginResult deactResult = new PluginResult(PluginResult.Status.NO_RESULT);
-                deactResult.setKeepCallback(true);
-                callbackContext.sendPluginResult(deactResult);
-                return true;
- 
-            default:
-                return false;
+    public static void sendResponseApdu(byte[] response) {
+        try {
+            if (CordovaApduService.class != null && response != null) {
+                HostApduService service = CordovaApduService.class.newInstance();
+                service.sendResponseApdu(response);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send APDU response", e);
         }
     }
  
-    // Called from CordovaApduService when terminal disconnects
-    public void deactivated(int reason) {
-        Log.d(TAG, "Deactivated: " + reason);
+    private static byte[] toByteArray(String hex) {
+        int len = hex.length();
+        byte[] data = new byte[len / 2];
  
-        if (onDeactivatedCallback != null) {
-            PluginResult result = new PluginResult(PluginResult.Status.OK, reason);
-            result.setKeepCallback(true);
-            onDeactivatedCallback.sendPluginResult(result);
+        for (int i = 0; i < len; i += 2) {
+            data[i / 2] = (byte) ((Character.digit(hex.charAt(i), 16) << 4)
+                                 + Character.digit(hex.charAt(i+1), 16));
         }
+ 
+        return data;
     }
  
-    // Called from CordovaApduService when APDU command received
-    public void sendCommand(byte[] command) {
-        Log.d(TAG, "APDU Command: " + Arrays.toString(command));
+    private static String bytesToHex(byte[] bytes) {
+        final char[] hexArray = "0123456789ABCDEF".toCharArray();
+        char[] hexChars = new char[bytes.length * 2];
  
-        if (onCommandCallback != null) {
-            PluginResult result = new PluginResult(PluginResult.Status.OK, command);
-            result.setKeepCallback(true);
-            onCommandCallback.sendPluginResult(result);
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = hexArray[v >>> 4];
+            hexChars[j * 2 + 1] = hexArray[v & 0x0F];
         }
+ 
+        return new String(hexChars);
     }
 }
