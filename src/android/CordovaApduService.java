@@ -4,7 +4,6 @@ import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
 import android.util.Log;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 public class CordovaApduService extends HostApduService {
@@ -24,56 +23,6 @@ public class CordovaApduService extends HostApduService {
     private static final byte[] NDEF_AID = {
         (byte)0xD2, (byte)0x76, (byte)0x00, (byte)0x00, (byte)0x85, (byte)0x01, (byte)0x01
     };
-
-    // NDEF text to present to the reader — change this string to whatever text you want
-    private static final String TEXT_TO_SEND = "Hello from card";
-
-    // Built files to respond to READ BINARY
-    private final byte[] ccFile;
-    private final byte[] ndefFile;
-
-    public CordovaApduService() {
-        // Build NDEF text record (one Well-known Text record)
-        byte[] textBytes = TEXT_TO_SEND.getBytes(StandardCharsets.UTF_8);
-        byte[] lang = "en".getBytes(StandardCharsets.US_ASCII);
-        byte status = (byte)(lang.length & 0x3F); // UTF-8, language length
-        byte[] payload = new byte[1 + lang.length + textBytes.length];
-        payload[0] = status;
-        System.arraycopy(lang, 0, payload, 1, lang.length);
-        System.arraycopy(textBytes, 0, payload, 1 + lang.length, textBytes.length);
-
-        // NDEF record header: MB=1 ME=1 SR=1 TNF=0x01 (well-known)
-        byte header = (byte)0xD1;
-        byte typeLength = 0x01;
-        int payloadLen = payload.length;
-        byte[] ndefRecord = new byte[4 + payloadLen];
-        ndefRecord[0] = header;
-        ndefRecord[1] = typeLength;
-        ndefRecord[2] = (byte)payloadLen; // SR set
-        ndefRecord[3] = 0x54; // 'T'
-        System.arraycopy(payload, 0, ndefRecord, 4, payloadLen);
-
-        // NLEN (2 bytes) + NDEF record
-        int ndefLen = ndefRecord.length;
-        ndefFile = new byte[2 + ndefLen];
-        ndefFile[0] = (byte)((ndefLen >> 8) & 0xFF);
-        ndefFile[1] = (byte)(ndefLen & 0xFF);
-        System.arraycopy(ndefRecord, 0, ndefFile, 2, ndefLen);
-
-        // Simple CC file per NFC Forum Type-4 minimal mapping:
-        // CCLEN(2) = 0x000F, Mapping version = 0x20, MLe/MLc = 0x0000, one NDEF File Control TLV
-        int maxNdef = Math.min(ndefFile.length, 0xFFFF);
-        ccFile = new byte[] {
-            0x00, 0x0F, // CCLEN = 15
-            0x20,       // mapping version 2.0
-            0x00, 0x00, // MLe (not critical)
-            0x00, 0x00, // MLc (not critical)
-            0x04, 0x06, // NDEF File Control TLV (tag 0x04) length 6
-            NDEF_FILE_ID[0], NDEF_FILE_ID[1], // file id E1 04
-            (byte)((maxNdef >> 8) & 0xFF), (byte)(maxNdef & 0xFF), // max NDEF size (2 bytes)
-            0x00, 0x00 // read/write access (0x00 = allowed)
-        };
-    }
 
     @Override
     public byte[] processCommandApdu(byte[] apdu, Bundle extras) {
@@ -98,7 +47,6 @@ public class CordovaApduService extends HostApduService {
                         byte[] aid = Arrays.copyOfRange(apdu, 5, 5 + lc);
                         Log.d(TAG, "SELECT AID: " + Arrays.toString(aid));
                         if (Arrays.equals(aid, NDEF_AID)) {
-                            // Reader selected the NDEF application
                             notifyJsIfPresent(apdu);
                             return SW_OK;
                         } else {
@@ -139,35 +87,39 @@ public class CordovaApduService extends HostApduService {
                 if (apdu.length == 5) le = apdu[4] & 0xFF;
                 Log.d(TAG, "READ BINARY offset=" + offset + " le=" + le);
 
+                // Get current CC and NDEF files (dynamic)
+                byte[] currentCc = HCEPlugin.getCcFile();
+                byte[] currentNdef = HCEPlugin.getNdefFile();
+
                 // If offset inside CC file, serve CC slice
-                if (offset < ccFile.length) {
-                    int available = ccFile.length - offset;
+                if (offset < currentCc.length) {
+                    int available = currentCc.length - offset;
                     int toSend = (le == 0) ? available : Math.min(le, available);
                     if (toSend <= 0) {
                         notifyJsIfPresent(apdu);
                         return SW_FILE_NOT_FOUND;
                     }
                     byte[] resp = new byte[toSend + SW_OK.length];
-                    System.arraycopy(ccFile, offset, resp, 0, toSend);
+                    System.arraycopy(currentCc, offset, resp, 0, toSend);
                     resp[toSend] = SW_OK[0];
                     resp[toSend + 1] = SW_OK[1];
                     notifyJsIfPresent(apdu);
                     return resp;
                 } else {
                     // else treat as read from NDEF file (offset measured after CC)
-                    int ndefOffset = offset - ccFile.length;
+                    int ndefOffset = offset - currentCc.length;
                     if (ndefOffset < 0) {
                         notifyJsIfPresent(apdu);
                         return SW_FILE_NOT_FOUND;
                     }
-                    int available = ndefFile.length - ndefOffset;
+                    int available = currentNdef.length - ndefOffset;
                     int toSend = (le == 0) ? available : Math.min(le, available);
                     if (toSend <= 0) {
                         notifyJsIfPresent(apdu);
                         return SW_FILE_NOT_FOUND;
                     }
                     byte[] resp = new byte[toSend + SW_OK.length];
-                    System.arraycopy(ndefFile, ndefOffset, resp, 0, toSend);
+                    System.arraycopy(currentNdef, ndefOffset, resp, 0, toSend);
                     resp[toSend] = SW_OK[0];
                     resp[toSend + 1] = SW_OK[1];
                     notifyJsIfPresent(apdu);
@@ -197,7 +149,6 @@ public class CordovaApduService extends HostApduService {
     private void notifyJsIfPresent(byte[] apdu) {
         try {
             if (HCEPlugin != null && HCEPlugin.commandCallback != null) {
-                // Defensive copy
                 byte[] copy = Arrays.copyOf(apdu, apdu.length);
                 HCEPlugin.commandCallback.onCommandReceived(copy);
             }
