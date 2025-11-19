@@ -53,3 +53,44 @@ public class CordovaApduService extends HostApduService {
                             HCEPlugin.notifyPersistentCallback(apdu);
                             return SW_FILE_NOT_FOUND;
                         }
+                    }
+                }
+                HCEPlugin.notifyPersistentCallback(apdu);
+                return SW_INS_NOT_SUPPORTED;
+            }
+
+            // SELECT by FID -> 00 A4 02 0C 02 <FID>
+            if (cla == 0x00 && ins == 0xA4 && p1 == 0x02) {
+                if (apdu.length >= 7) {
+                    byte fid0 = apdu[5];
+                    byte fid1 = apdu[6];
+                    Log.d(TAG, String.format("SELECT FID: %02X %02X", fid0, fid1));
+                    if (fid0 == CC_FILE_ID[0] && fid1 == CC_FILE_ID[1]) {
+                        HCEPlugin.notifyPersistentCallback(apdu);
+                        return SW_OK;
+                    } else if (fid0 == NDEF_FILE_ID[0] && fid1 == NDEF_FILE_ID[1]) {
+                        HCEPlugin.notifyPersistentCallback(apdu);
+                        return SW_OK;
+                    } else {
+                        HCEPlugin.notifyPersistentCallback(apdu);
+                        return SW_FILE_NOT_FOUND;
+                    }
+                }
+                HCEPlugin.notifyPersistentCallback(apdu);
+                return SW_INS_NOT_SUPPORTED;
+            }
+
+            // READ BINARY -> 00 B0 P1 P2 [Le]
+            if (cla == 0x00 && ins == 0xB0) {
+                int offset = (p1 << 8) | p2;
+                int le = 0;
+                if (apdu.length == 5) le = apdu[4] & 0xFF;
+                Log.d(TAG, "READ BINARY offset=" + offset + " le=" + le);
+
+                // Get current CC and NDEF files (dynamic from HCEPlugin)
+                byte[] currentCc = HCEPlugin.getCcFile();
+                byte[] currentNdef = HCEPlugin.getNdefFile();
+
+                // If offset inside CC file, serve CC slice
+                if (offset < currentCc.length) {
+                    int avail
