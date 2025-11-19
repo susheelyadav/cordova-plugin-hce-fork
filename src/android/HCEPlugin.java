@@ -2,34 +2,39 @@ package com.megster.cordova.hce;
 
 import org.apache.cordova.CallbackContext;
 import org.apache.cordova.CordovaPlugin;
+import org.apache.cordova.PluginResult;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Minimal HCEPlugin with dynamic NDEF text setter and getters used by CordovaApduService.
- * If your existing HCEPlugin already has other actions, merge the setNdefText block into execute().
- */
 public class HCEPlugin extends CordovaPlugin {
 
-    // JS callback interface for notifications (kept for compatibility)
-    public static CommandCallback commandCallback = null;
+    // Persistent callback for JS notifications (keepCallback = true)
+    public static CallbackContext persistentCallback = null;
 
-    // AtomicReference to store dynamic NDEF text (thread-safe)
+    // Thread-safe holder for dynamic NDEF text
     private static final AtomicReference<String> ndefTextRef = new AtomicReference<>("Hello from card");
-
-    /**
-     * Simple interface used by CordovaApduService to notify JS.
-     * You may already have a commandCallback in your plugin; adapt if needed.
-     */
-    public interface CommandCallback {
-        void onCommandReceived(byte[] apdu);
-    }
 
     @Override
     public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
+
+        if ("registerCommandCallback".equals(action)) {
+            persistentCallback = callbackContext;
+            PluginResult result = new PluginResult(PluginResult.Status.OK);
+            result.setKeepCallback(true);
+            callbackContext.sendPluginResult(result);
+            return true;
+        }
+
+        if ("unregisterCommandCallback".equals(action)) {
+            persistentCallback = null;
+            callbackContext.success();
+            return true;
+        }
+
         if ("setNdefText".equals(action)) {
             String text = args.getString(0);
             setNdefText(text);
@@ -37,23 +42,15 @@ public class HCEPlugin extends CordovaPlugin {
             return true;
         }
 
-        // If you have other actions, handle them here or call super
+        // other actions (if any) fall back
         return super.execute(action, args, callbackContext);
     }
 
-    /**
-     * Called from JS to update the NDEF text that will be served to readers.
-     * Must be set before the tag is polled.
-     */
     public static void setNdefText(String text) {
         if (text == null) text = "";
         ndefTextRef.set(text);
     }
 
-    /**
-     * Build and return the current NDEF file bytes (NLEN + NDEF message)
-     * based on the latest value set via setNdefText().
-     */
     public static byte[] getNdefFile() {
         String text = ndefTextRef.get();
         byte[] textBytes = text.getBytes(StandardCharsets.UTF_8);
@@ -64,7 +61,6 @@ public class HCEPlugin extends CordovaPlugin {
         System.arraycopy(lang, 0, payload, 1, lang.length);
         System.arraycopy(textBytes, 0, payload, 1 + lang.length, textBytes.length);
 
-        // NDEF record header: MB=1 ME=1 SR=1 TNF=0x01
         byte header = (byte)0xD1;
         byte typeLength = 0x01;
         int payloadLen = payload.length;
@@ -83,9 +79,6 @@ public class HCEPlugin extends CordovaPlugin {
         return ndefFile;
     }
 
-    /**
-     * Build and return a minimal CC file for the current NDEF length.
-     */
     public static byte[] getCcFile() {
         byte[] ndefFile = getNdefFile();
         int maxNdef = Math.min(ndefFile.length, 0xFFFF);
@@ -94,10 +87,36 @@ public class HCEPlugin extends CordovaPlugin {
             0x20,       // mapping version 2.0
             0x00, 0x00, // MLe
             0x00, 0x00, // MLc
-            0x04, 0x06, // NDEF File Control TLV (tag 0x04) length 6
+            0x04, 0x06, // NDEF File Control TLV length 6
             (byte)0xE1, (byte)0x04, // file id E1 04
             (byte)((maxNdef >> 8) & 0xFF), (byte)(maxNdef & 0xFF),
             0x00, 0x00 // read/write access
         };
+    }
+
+    // Helper: send APDU notification (hex string) to JS persistent callback
+    public static void notifyPersistentCallback(byte[] apdu) {
+        try {
+            if (persistentCallback != null) {
+                String hex = bytesToHex(apdu);
+                PluginResult pr = new PluginResult(PluginResult.Status.OK, hex);
+                pr.setKeepCallback(true);
+                persistentCallback.sendPluginResult(pr);
+            }
+        } catch (Exception e) {
+            // best-effort: ignore
+        }
+    }
+
+    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
+    public static String bytesToHex(byte[] bytes) {
+        if (bytes == null) return "";
+        char[] hexChars = new char[bytes.length * 2];
+        for (int j = 0; j < bytes.length; j++) {
+            int v = bytes[j] & 0xFF;
+            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
+        }
+        return new String(hexChars);
     }
 }
