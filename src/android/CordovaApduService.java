@@ -93,4 +93,52 @@ public class CordovaApduService extends HostApduService {
 
                 // If offset inside CC file, serve CC slice
                 if (offset < currentCc.length) {
-                    int avail
+                    int available = currentCc.length - offset;
+                    int toSend = (le == 0) ? available : Math.min(le, available);
+                    if (toSend <= 0) {
+                        HCEPlugin.notifyPersistentCallback(apdu);
+                        return SW_FILE_NOT_FOUND;
+                    }
+                    byte[] resp = new byte[toSend + SW_OK.length];
+                    System.arraycopy(currentCc, offset, resp, 0, toSend);
+                    resp[toSend] = SW_OK[0];
+                    resp[toSend + 1] = SW_OK[1];
+                    HCEPlugin.notifyPersistentCallback(apdu);
+                    return resp;
+                } else {
+                    // else treat as read from NDEF file (offset measured after CC)
+                    int ndefOffset = offset - currentCc.length;
+                    if (ndefOffset < 0) {
+                        HCEPlugin.notifyPersistentCallback(apdu);
+                        return SW_FILE_NOT_FOUND;
+                    }
+                    int available = currentNdef.length - ndefOffset;
+                    int toSend = (le == 0) ? available : Math.min(le, available);
+                    if (toSend <= 0) {
+                        HCEPlugin.notifyPersistentCallback(apdu);
+                        return SW_FILE_NOT_FOUND;
+                    }
+                    byte[] resp = new byte[toSend + SW_OK.length];
+                    System.arraycopy(currentNdef, ndefOffset, resp, 0, toSend);
+                    resp[toSend] = SW_OK[0];
+                    resp[toSend + 1] = SW_OK[1];
+                    HCEPlugin.notifyPersistentCallback(apdu);
+                    return resp;
+                }
+            }
+
+            // Unsupported instruction
+            HCEPlugin.notifyPersistentCallback(apdu);
+            return SW_INS_NOT_SUPPORTED;
+
+        } catch (Exception e) {
+            Log.e(TAG, "Error in processCommandApdu", e);
+            return SW_INS_NOT_SUPPORTED;
+        }
+    }
+
+    @Override
+    public void onDeactivated(int reason) {
+        Log.d(TAG, "HCE service deactivated: " + reason);
+    }
+}
